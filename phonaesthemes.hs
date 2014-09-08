@@ -2,13 +2,16 @@ import Data.List (isSuffixOf, isInfixOf, isPrefixOf, nub, foldl', stripPrefix, s
 import Data.List.Split (splitOn)
 import Data.Maybe (fromJust)
 import Data.Function (on)
-import System.Directory (getDirectoryContents, makeRelativeToCurrentDirectory)
-import Control.Monad (forever)
+
+import System.Directory (getDirectoryContents, makeRelativeToCurrentDirectory, removeFile)
+import System.IO (withFile, IOMode(AppendMode), hPutStrLn)
+
+import Control.Monad (forever, when)
 import qualified Data.Map.Strict as M
 
 
 data Edge = Edge String String String 
-	deriving (Show)
+	deriving (Show, Read)
 
 rel (Edge r _ _) = r
 start (Edge _ s _) = s
@@ -41,7 +44,9 @@ word edge = last . splitOn "/" $ start edge
 minify :: Edge -> Edge
 minify edge = Edge [] (removePrefix $ start edge) (removePrefix $ end edge)
 	where
-		removePrefix = fromJust . stripPrefix "/c/en/"
+		removePrefix str 
+			| "/c/en/" `isPrefixOf` str = (fromJust . stripPrefix "/c/en/") str
+			| otherwise = str
 
 
 (prefixMin, prefixMax) = (2, 4)
@@ -57,35 +62,62 @@ ngrams edge = prefixes w ++ suffixes w
 	where
 		w = word edge
 
+matches :: String -> String -> Bool
+matches term prefix
+	| ('-':xs) <- prefix = xs `isSuffixOf` term'
+	| otherwise = (init prefix) `isPrefixOf` term'
+	where
+		term' = filter (not . (==) '-') $ (head . splitOn "/") term
+
 ngramPairs :: Edge -> [(String, String)]
-ngramPairs edge = [(ngram, end edge) | ngram <- ngrams $! edge]
+ngramPairs edge = [(ngram, end edge) | ngram <- ngrams edge, not (end edge `matches` ngram)]
 
-
-updateCount :: (Ord a) => M.Map a Int -> a -> M.Map a Int
-updateCount dict k = M.insertWith (+) k 1 dict
 
 type Counter a = M.Map a Int
+
+updateCount :: (Ord a) => a -> Counter a -> Counter a
+updateCount k dict = M.insertWith (+) k 1 dict
 
 populateCounts :: (Counter (String, String), Counter String, Counter String) -> (String, String) -> (Counter (String, String), Counter String, Counter String)
 populateCounts (assoc_dict, ngram_dict, meaning_dict) pair@(ngram, meaning) = (assoc_dict', ngram_dict', meaning_dict')
 	where
-		ngram_dict' = updateCount ngram_dict ngram
-		assoc_dict' = updateCount assoc_dict pair
-		meaning_dict' = updateCount meaning_dict meaning
+		ngram_dict' = updateCount ngram $! ngram_dict
+		assoc_dict' = updateCount pair $! assoc_dict
+		meaning_dict' = updateCount meaning $! meaning_dict
 
+
+simedge_cache = ".simedge_cache"
+cache = ".cache"
+
+preprocess :: String -> IO ()
+preprocess assertion_fname = do
+	putStrLn $ "Preprocessing " ++ assertion_fname
+	file <- readFile assertion_fname
+	let edges = map lineToEdge $ lines file
+	let posedges = filter positiveRel edges
+	putStrLn "    Writing to simedge cache"
+	withFile simedge_cache AppendMode $ \handle -> do
+		let simedges = filter simpleStart posedges
+		let min_simedges = map minify simedges
+		mapM_ (hPutStrLn handle . show) min_simedges
+	putStrLn "    Writing to posedge cache"
+	withFile cache AppendMode $ \handle -> do
+		let min_posedges = map minify posedges
+		mapM_ (hPutStrLn handle . show) min_posedges
+	return ()
 
 main = do
-	conts <- getDirectoryContents "assertions"
-	let csv_fnames = map ((++) "assertions\\") $ filter (isSuffixOf "csv") conts
-	csvs <- mapM readFile csv_fnames
-	let edges = [lineToEdge line | csv_lines <- map lines csvs, line <- csv_lines]
-	let posedges = filter positiveRel edges
-	--print $ head posedges
-	let simedges = filter simpleStart posedges
-	--print $ head simedges
-	let minedges = map minify simedges
-	--print $ head minedges
-	let pairs = concat $ filter (not . null) $ map ngramPairs minedges
+	ls <- getDirectoryContents "."
+	when (any (not . (flip elem) ls) [simedge_cache, cache]) (do
+		when (simedge_cache `elem` ls) (removeFile simedge_cache)
+		when (cache `elem` ls) (removeFile cache)
+		conts <- getDirectoryContents "assertions"
+		let csv_fnames = map ((++) "assertions\\") $ filter (isSuffixOf "csv") conts
+		mapM_ preprocess csv_fnames)
+	-- read in from simedge cache (minedges), normal cache
+	putStrLn "Reading from simedge cache"
+	simedges <- readFile simedge_cache
+	let pairs = concat $ filter (not . null) $ map (ngramPairs . read) $ lines simedges
 	let (assoc_counts, ngram_totals, meaning_totals) = foldl' populateCounts (M.empty, M.empty, M.empty) pairs
 	putStrLn "Ready."
 	forever $ do
@@ -94,3 +126,4 @@ main = do
 		let results = map (\key -> (snd key, fromJust $ M.lookup key assoc_counts)) keys
 		let sorted_results = sortBy (compare `on` snd) results
 		mapM_ (putStrLn . show) sorted_results
+	return ()
