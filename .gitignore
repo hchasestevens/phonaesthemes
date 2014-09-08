@@ -51,3 +51,5 @@ $RECYCLE.BIN/
 *.msp
 *.csv
 *.exe
+*.simedge_cache
+*.cache

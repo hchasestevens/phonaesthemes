@@ -1,3 +1,4 @@
+import qualified Data.Map.Strict as M
 import Data.List (isSuffixOf, isInfixOf, isPrefixOf, nub, foldl', stripPrefix, sortBy)
 import Data.List.Split (splitOn)
 import Data.Maybe (fromJust)
@@ -7,11 +8,10 @@ import System.Directory (getDirectoryContents, makeRelativeToCurrentDirectory, r
 import System.IO (withFile, IOMode(AppendMode), hPutStrLn)
 
 import Control.Monad (forever, when)
-import qualified Data.Map.Strict as M
 
 
 data Edge = Edge String String String 
-	deriving (Show, Read)
+	deriving (Show, Read)  --TODO: minified instancing of show/read
 
 rel (Edge r _ _) = r
 start (Edge _ s _) = s
@@ -70,7 +70,7 @@ matches term prefix
 		term' = filter (not . (==) '-') $ (head . splitOn "/") term
 
 ngramPairs :: Edge -> [(String, String)]
-ngramPairs edge = [(ngram, end edge) | ngram <- ngrams edge, not (end edge `matches` ngram)]
+ngramPairs edge = [(ngram, end edge) | ngram <- ngrams edge]
 
 
 type Counter a = M.Map a Int
@@ -95,12 +95,12 @@ preprocess assertion_fname = do
 	file <- readFile assertion_fname
 	let edges = map lineToEdge $ lines file
 	let posedges = filter positiveRel edges
-	putStrLn "    Writing to simedge cache"
+	putStrLn "    Writing to simedge cache."
 	withFile simedge_cache AppendMode $ \handle -> do
 		let simedges = filter simpleStart posedges
 		let min_simedges = map minify simedges
 		mapM_ (hPutStrLn handle . show) min_simedges
-	putStrLn "    Writing to posedge cache"
+	putStrLn "    Writing to posedge cache."
 	withFile cache AppendMode $ \handle -> do
 		let min_posedges = map minify posedges
 		mapM_ (hPutStrLn handle . show) min_posedges
@@ -108,22 +108,29 @@ preprocess assertion_fname = do
 
 main = do
 	ls <- getDirectoryContents "."
+	conts <- getDirectoryContents "assertions"
+	let csv_fnames = map ((++) "assertions\\") $ filter (isSuffixOf "csv") conts
+	-- TODO: discard caches if assertions have been added/removed
 	when (any (not . (flip elem) ls) [simedge_cache, cache]) (do
 		when (simedge_cache `elem` ls) (removeFile simedge_cache)
 		when (cache `elem` ls) (removeFile cache)
-		conts <- getDirectoryContents "assertions"
-		let csv_fnames = map ((++) "assertions\\") $ filter (isSuffixOf "csv") conts
 		mapM_ preprocess csv_fnames)
-	-- read in from simedge cache (minedges), normal cache
-	putStrLn "Reading from simedge cache"
 	simedges <- readFile simedge_cache
+	-- TODO: ngramPairs optionally returns phonemes (SPHINX?)
 	let pairs = concat $ filter (not . null) $ map (ngramPairs . read) $ lines simedges
 	let (assoc_counts, ngram_totals, meaning_totals) = foldl' populateCounts (M.empty, M.empty, M.empty) pairs
+	-- TODO: Further populate with depth-2 concepts (loaded in from .cache)
+	-- TODO: Filter by not "matches"
+	-- TODO: Lower bound of wilson score on concepts
 	putStrLn "Ready."
+	-- Mode 1: Interactive, user supplies prefixes or suffixes
 	forever $ do
 		term <- getLine
 		let keys = filter (((==) term) . fst) $ M.keys assoc_counts
 		let results = map (\key -> (snd key, fromJust $ M.lookup key assoc_counts)) keys
 		let sorted_results = sortBy (compare `on` snd) results
 		mapM_ (putStrLn . show) sorted_results
+	-- TODO: Mode 2: 
+	-- TODO: Sort all pairings by lower bound of wilson score per-prefix/suffix
+	-- TODO: Printout top N pairings
 	return ()
