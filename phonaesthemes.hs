@@ -12,6 +12,9 @@ import Control.Monad (forever, when)
 import Control.DeepSeq (($!!), force)
 
 
+id' = (id $!)
+
+
 -- Edges
 data Edge = Edge String String String 
 	deriving (Show, Read, Eq, Ord)  --TODO: minified instancing of show/read
@@ -83,12 +86,13 @@ type Counter a = M.HashMap a Int
 updateCount :: (Ord a, Hashable a) => a -> Counter a -> Counter a
 updateCount k dict = M.insertWith (+) k 1 $! dict
 
-populateCounts :: (Counter (String, String), Counter String, Counter String) -> (String, String) -> (Counter (String, String), Counter String, Counter String)
-populateCounts (assoc_dict, ngram_dict, meaning_dict) pair@(ngram, meaning) = let
+populateCounts :: (Counter (String, String), Counter String, Counter String, Int) -> (String, String) -> (Counter (String, String), Counter String, Counter String, Int)
+populateCounts (assoc_dict, ngram_dict, meaning_dict, i) pair@(ngram, meaning) = let
 		assoc_dict' = updateCount pair $! assoc_dict
 		ngram_dict' = updateCount ngram $! ngram_dict
 		meaning_dict' = updateCount meaning $! meaning_dict 
-	in (assoc_dict', ngram_dict', meaning_dict')
+		f = if (i `mod` 1000000) == 0 then force else id'  -- save memory via deepseq
+	in f (assoc_dict', ngram_dict', meaning_dict', i + 1)
 
 
 -- Statistics
@@ -153,9 +157,9 @@ main = do
 	-- TODO: ngramPairs optionally returns phonemes (SPHINX?)
 	-- Build counts:
 	putStrLn "Initializing."
-	pairs <- do return $!! concatMap (ngramPairs . read) $ sort $ lines simedges
-	putStrLn "x"
-	(assoc_counts, ngram_totals, meaning_totals) <- do return $!! foldl' populateCounts (M.empty, M.empty, M.empty) pairs
+	let pairs = concatMap (force . ngramPairs . read) $ sort $ lines simedges
+	(assoc_counts, ngram_totals, meaning_totals, i) <- do return $!! foldl' (id' . populateCounts) (M.empty, M.empty, M.empty, 0) pairs
+	print i
 	-- TODO: Further populate with depth-2 concepts (loaded in from .cache)
 	-- TODO: Filter by not "matches"
 	-- TODO: Lower bound of wilson score on concepts
