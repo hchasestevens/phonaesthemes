@@ -12,9 +12,6 @@ import Control.Monad (forever, when)
 import Control.DeepSeq (($!!), force)
 
 
-id' = (id $!)
-
-
 -- Edges
 data Edge = Edge String String String 
 	deriving (Show, Read, Eq, Ord)  --TODO: minified instancing of show/read
@@ -91,7 +88,7 @@ populateCounts (assoc_dict, ngram_dict, meaning_dict, i) pair@(ngram, meaning) =
 		assoc_dict' = updateCount pair $! assoc_dict
 		ngram_dict' = updateCount ngram $! ngram_dict
 		meaning_dict' = updateCount meaning $! meaning_dict 
-		f = if (i `mod` 1000000) == 0 then force else id'  -- save memory via deepseq
+		f = if (i `mod` 1000000) == 0 then force else id  -- save memory via deepseq
 	in f (assoc_dict', ngram_dict', meaning_dict', i + 1)
 
 
@@ -146,7 +143,7 @@ preprocess assertion_fname = do
 main = do
 	ls <- getDirectoryContents "."
 	conts <- getDirectoryContents "assertions"
-	let csv_fnames = map ((++) "assertions\\") $ filter (isSuffixOf "csv") conts
+	let csv_fnames = map ("assertions\\" ++) $ filter (isSuffixOf "csv") conts
 	-- TODO: discard caches if assertions have been added/removed
 	-- Populate cache, if necessary:
 	when (any (not . (flip elem) ls) [simedge_cache, cache]) (do
@@ -158,8 +155,7 @@ main = do
 	-- Build counts:
 	putStrLn "Initializing."
 	let pairs = concatMap (force . ngramPairs . read) $ sort $ lines simedges
-	(assoc_counts, ngram_totals, meaning_totals, i) <- do return $!! foldl' (id' . populateCounts) (M.empty, M.empty, M.empty, 0) pairs
-	print i
+	(assoc_counts, ngram_totals, meaning_totals, _) <- do return $!! foldl' populateCounts (M.empty, M.empty, M.empty, 0) pairs
 	-- TODO: Further populate with depth-2 concepts (loaded in from .cache)
 	-- TODO: Filter by not "matches"
 	-- TODO: Lower bound of wilson score on concepts
@@ -168,7 +164,7 @@ main = do
 	-- Mode 1: Interactive, user supplies prefixes or suffixes
 	forever $ do
 		term <- getLine
-		let keys = filter (((==) term) . fst) $ M.keys assoc_probs
+		let keys = filter ((term ==) . fst) $ M.keys assoc_probs
 		    results = map (\key -> (snd key, fromJust $ M.lookup key assoc_probs)) keys
 		    sorted_results = sortBy (compare `on` snd) results
 		mapM_ (putStrLn . show) sorted_results
