@@ -1,18 +1,20 @@
-import qualified Data.Map.Strict as M
-import Data.List (isSuffixOf, isInfixOf, isPrefixOf, nub, foldl', stripPrefix, sortBy)
+import qualified Data.HashMap.Strict as M
+import Data.List (isSuffixOf, isInfixOf, isPrefixOf, nub, foldl', stripPrefix, sortBy, sort)
 import Data.List.Split (splitOn)
 import Data.Maybe (fromJust)
 import Data.Function (on)
+import Data.Hashable (Hashable)
 
 import System.Directory (getDirectoryContents, makeRelativeToCurrentDirectory, removeFile)
 import System.IO (withFile, IOMode(AppendMode), hPutStrLn)
 
 import Control.Monad (forever, when)
+import Control.DeepSeq (($!!), force)
 
 
 -- Edges
 data Edge = Edge String String String 
-	deriving (Show, Read)  --TODO: minified instancing of show/read
+	deriving (Show, Read, Eq, Ord)  --TODO: minified instancing of show/read
 
 rel (Edge r _ _) = r
 start (Edge _ s _) = s
@@ -72,14 +74,14 @@ matches term prefix
 		term' = filter (not . (==) '-') $ (head . splitOn "/") term
 
 ngramPairs :: Edge -> [(String, String)]
-ngramPairs edge = [(ngram, end edge) | ngram <- ngrams edge]
+ngramPairs edge@(Edge _ _ e) = [(ngram, e) | ngram <- ngrams edge]
 
 
 -- Counters
-type Counter a = M.Map a Int
+type Counter a = M.HashMap a Int
 
-updateCount :: (Ord a) => a -> Counter a -> Counter a
-updateCount k dict = M.insertWith (+) k 1 dict
+updateCount :: (Ord a, Hashable a) => a -> Counter a -> Counter a
+updateCount k dict = M.insertWith (+) k 1 $! dict
 
 populateCounts :: (Counter (String, String), Counter String, Counter String) -> (String, String) -> (Counter (String, String), Counter String, Counter String)
 populateCounts (assoc_dict, ngram_dict, meaning_dict) pair@(ngram, meaning) = let
@@ -110,7 +112,7 @@ wilsonBounds n total = IntervalBounds upper lower
 		upper = (a + b) / denom
 		lower = (a - b) / denom
 
-lowerProb :: (Ord k) => Counter k -> (a, k) -> Int -> (Float, Int, Int)
+lowerProb :: (Ord k, Hashable k) => Counter k -> (a, k) -> Int -> (Float, Int, Int)
 lowerProb total_counts (_, k) n = (lowBound $ wilsonBounds n total, n, total)
 	where
 		total = fromJust $ k `M.lookup` total_counts
@@ -134,7 +136,7 @@ preprocess assertion_fname = do
 	putStrLn "    Writing to posedge cache."
 	withFile cache AppendMode $ \handle -> do
 		let min_posedges = map minify posedges
-		mapM_ (hPutStrLn handle . show) min_posedges
+		mapM_ (hPutStrLn handle . show) $ sort min_posedges
 	return ()
 
 main = do
@@ -150,8 +152,10 @@ main = do
 	simedges <- readFile simedge_cache
 	-- TODO: ngramPairs optionally returns phonemes (SPHINX?)
 	-- Build counts:
-	let pairs = concat $ filter (not . null) $ map (ngramPairs . read) $ lines simedges
-	let (assoc_counts, ngram_totals, meaning_totals) = foldl' populateCounts (M.empty, M.empty, M.empty) pairs
+	putStrLn "Initializing."
+	pairs <- do return $!! concatMap (ngramPairs . read) $ sort $ lines simedges
+	putStrLn "x"
+	(assoc_counts, ngram_totals, meaning_totals) <- do return $!! foldl' populateCounts (M.empty, M.empty, M.empty) pairs
 	-- TODO: Further populate with depth-2 concepts (loaded in from .cache)
 	-- TODO: Filter by not "matches"
 	-- TODO: Lower bound of wilson score on concepts
@@ -161,8 +165,8 @@ main = do
 	forever $ do
 		term <- getLine
 		let keys = filter (((==) term) . fst) $ M.keys assoc_probs
-		let results = map (\key -> (snd key, fromJust $ M.lookup key assoc_probs)) keys
-		let sorted_results = sortBy (compare `on` snd) results
+		    results = map (\key -> (snd key, fromJust $ M.lookup key assoc_probs)) keys
+		    sorted_results = sortBy (compare `on` snd) results
 		mapM_ (putStrLn . show) sorted_results
 	-- TODO: Mode 2: 
 	-- TODO: Sort all pairings by lower bound of wilson score per-prefix/suffix
