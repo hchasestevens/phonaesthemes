@@ -13,15 +13,15 @@ import Control.DeepSeq (($!!), force)
 
 
 -- Edges
-data Edge = Edge String String String 
-	deriving (Show, Read, Eq, Ord)  --TODO: minified instancing of show/read
+type Edge = (String, String, String)
 
-rel (Edge r _ _) = r
-start (Edge _ s _) = s
-end (Edge _ _ e) = e
+newEdge r s e = (r, s, e)
+rel (r, _, _) = r
+start (_, s, _) = s
+end (_, _, e) = e
 
 toEdge :: [String] -> Edge
-toEdge (_:r:s:e:_) = Edge r s e
+toEdge (_:r:s:e:_) = newEdge r s e
 
 lineToEdge :: String -> Edge
 lineToEdge = toEdge . splitOn "\t"
@@ -45,7 +45,7 @@ word :: Edge -> String
 word edge = last . splitOn "/" $ start edge
 
 minify :: Edge -> Edge
-minify edge = Edge [] (removePrefix $ start edge) (removePrefix $ end edge)
+minify edge = newEdge [] (removePrefix $ start edge) (removePrefix $ end edge)
 	where
 		removePrefix str 
 			| "/c/en/" `isPrefixOf` str = (fromJust . stripPrefix "/c/en/") str
@@ -74,7 +74,7 @@ matches term prefix
 		term' = filter (not . (==) '-') $ (head . splitOn "/") term
 
 ngramPairs :: Edge -> [(String, String)]
-ngramPairs edge@(Edge _ _ e) = [(ngram, e) | ngram <- ngrams edge]
+ngramPairs edge@(_, _, e) = [(ngram, e) | ngram <- ngrams edge]
 
 
 -- Counters
@@ -93,15 +93,14 @@ populateCounts (assoc_dict, ngram_dict, meaning_dict, i) pair@(ngram, meaning) =
 
 
 -- Statistics
-data IntervalBounds = IntervalBounds Float Float
-	deriving (Show)
+type IntervalBounds = (Float, Float)
 
-highBound (IntervalBounds x _) = x
-lowBound (IntervalBounds _ x) = x
+highBound (x, _) = x
+lowBound (_, x) = x
 
 wilsonBounds :: Int -> Int -> IntervalBounds
-wilsonBounds n 1 = IntervalBounds 1 0
-wilsonBounds n total = IntervalBounds upper lower
+wilsonBounds n 1 = (1, 0)
+wilsonBounds n total = (upper, lower)
 	where
 		z = 2.575  -- 99% confidence
 		n' = fromIntegral n
