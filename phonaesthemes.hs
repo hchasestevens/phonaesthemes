@@ -142,6 +142,7 @@ preprocess assertion_fname = do
 main = do
 	ls <- getDirectoryContents "."
 	conts <- getDirectoryContents "assertions"
+	-- TODO: download ConceptNet files and extract to assertions folder when conts is empty.
 	let csv_fnames = map ("assertions\\" ++) $ filter (isSuffixOf "csv") conts
 	-- TODO: discard caches if assertions have been added/removed
 	-- Populate cache, if necessary:
